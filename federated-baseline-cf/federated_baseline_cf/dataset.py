@@ -3,13 +3,17 @@
 import os
 import zipfile
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from urllib.request import urlretrieve
 
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
+
+# Default data directory: relative to project root (../../data from this module)
+_MODULE_DIR = Path(__file__).parent
+_DEFAULT_DATA_DIR = _MODULE_DIR.parent.parent / "data"
 
 
 class MovieLensDataset(Dataset):
@@ -48,16 +52,18 @@ class MovieLensDataset(Dataset):
         }
 
 
-def download_movielens_1m(data_dir: str = "./data") -> str:
+def download_movielens_1m(data_dir: Optional[str] = None) -> str:
     """
     Download MovieLens 1M dataset.
 
     Args:
-        data_dir: Directory to save the dataset
+        data_dir: Directory to save the dataset (defaults to project root data/)
 
     Returns:
         Path to the extracted dataset directory
     """
+    if data_dir is None:
+        data_dir = str(_DEFAULT_DATA_DIR)
     data_path = Path(data_dir)
     data_path.mkdir(parents=True, exist_ok=True)
 
@@ -85,16 +91,18 @@ def download_movielens_1m(data_dir: str = "./data") -> str:
     return str(ml_dir)
 
 
-def load_movielens_1m(data_dir: str = "./data") -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def load_movielens_1m(data_dir: Optional[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Load MovieLens 1M dataset.
 
     Args:
-        data_dir: Directory containing the ml-1m folder
+        data_dir: Directory containing the ml-1m folder (defaults to project root data/)
 
     Returns:
         Tuple of (ratings_df, movies_df, users_df)
     """
+    if data_dir is None:
+        data_dir = str(_DEFAULT_DATA_DIR)
     ml_dir = Path(data_dir) / "ml-1m"
 
     # Load ratings
@@ -333,7 +341,7 @@ def load_partition_data(
     alpha: float = 0.5,
     test_ratio: float = 0.2,
     batch_size: int = 32,
-    data_dir: str = "./data",
+    data_dir: Optional[str] = None,
 ):
     """
     Load and partition MovieLens 1M data for federated learning.
@@ -344,12 +352,15 @@ def load_partition_data(
         alpha: Dirichlet concentration parameter
         test_ratio: Ratio of test data
         batch_size: Batch size for DataLoader
-        data_dir: Directory for data
+        data_dir: Directory for data (defaults to project root data/)
 
     Returns:
         Tuple of (trainloader, testloader, num_users, num_items, user2idx, item2idx)
     """
     from torch.utils.data import DataLoader
+
+    if data_dir is None:
+        data_dir = str(_DEFAULT_DATA_DIR)
 
     # Download and load data (only once)
     download_movielens_1m(data_dir)

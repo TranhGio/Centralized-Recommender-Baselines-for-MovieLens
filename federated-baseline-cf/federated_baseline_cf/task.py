@@ -19,7 +19,7 @@ def load_data(
     alpha: float = 0.5,
     test_ratio: float = 0.2,
     batch_size: int = 256,
-    data_dir: str = "./data",
+    data_dir: str = None,
 ):
     """
     Load MovieLens 1M data for a specific partition.
@@ -30,7 +30,7 @@ def load_data(
         alpha: Dirichlet concentration parameter (0.5 recommended)
         test_ratio: Ratio of test data (default: 0.2)
         batch_size: Batch size for DataLoader
-        data_dir: Directory for data storage
+        data_dir: Directory for data storage (defaults to project root data/)
 
     Returns:
         Tuple of (trainloader, testloader, num_users, num_items, user2idx, item2idx)

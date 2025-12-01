@@ -55,3 +55,4 @@ htmlcov/
 
 # Keep results JSON files
 !results/**/*.json
+.claude/
