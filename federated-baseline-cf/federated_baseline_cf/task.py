@@ -111,9 +111,14 @@ def train_basic_mf(
     lr: float,
     device: str,
     weight_decay: float = 1e-5,
+    proximal_mu: float = 0.0,
+    global_params: list = None,
 ) -> float:
     """
     Train BasicMF model with MSE loss.
+
+    When proximal_mu > 0 and global_params is provided, adds FedProx proximal term:
+        loss = MSE_loss + (proximal_mu / 2) * ||w - w_global||^2
 
     Args:
         model: BasicMF model instance
@@ -122,6 +127,8 @@ def train_basic_mf(
         lr: Learning rate
         device: Device to train on ('cuda' or 'cpu')
         weight_decay: L2 regularization strength
+        proximal_mu: FedProx proximal term coefficient (0.0 = standard training)
+        global_params: List of global model parameters (required if proximal_mu > 0)
 
     Returns:
         Average training loss
@@ -146,8 +153,15 @@ def train_basic_mf(
             # Forward pass
             predictions = model(user_ids, item_ids)
 
-            # Compute loss
+            # Compute base loss (MSE)
             loss = criterion(predictions, ratings)
+
+            # FedProx: Add proximal term if enabled
+            if proximal_mu > 0 and global_params is not None:
+                proximal_term = 0.0
+                for local_w, global_w in zip(model.parameters(), global_params):
+                    proximal_term += (local_w - global_w.to(device)).norm(2) ** 2
+                loss = loss + (proximal_mu / 2) * proximal_term
 
             # Backward pass
             optimizer.zero_grad()
@@ -171,9 +185,14 @@ def train_bpr_mf(
     device: str,
     weight_decay: float = 1e-5,
     num_negatives: int = 1,
+    proximal_mu: float = 0.0,
+    global_params: list = None,
 ) -> float:
     """
     Train BPRMF model with BPR loss.
+
+    When proximal_mu > 0 and global_params is provided, adds FedProx proximal term:
+        loss = BPR_loss + (proximal_mu / 2) * ||w - w_global||^2
 
     Critical for SOTA performance (RecSys 2024):
         - Proper negative sampling
@@ -188,6 +207,8 @@ def train_bpr_mf(
         device: Device to train on
         weight_decay: L2 regularization strength
         num_negatives: Number of negative samples per positive
+        proximal_mu: FedProx proximal term coefficient (0.0 = standard training)
+        global_params: List of global model parameters (required if proximal_mu > 0)
 
     Returns:
         Average training loss
@@ -233,6 +254,13 @@ def train_bpr_mf(
             # Compute BPR loss
             loss = criterion(pos_scores, neg_scores)
 
+            # FedProx: Add proximal term if enabled
+            if proximal_mu > 0 and global_params is not None:
+                proximal_term = 0.0
+                for local_w, global_w in zip(model.parameters(), global_params):
+                    proximal_term += (local_w - global_w.to(device)).norm(2) ** 2
+                loss = loss + (proximal_mu / 2) * proximal_term
+
             # Backward pass
             optimizer.zero_grad()
             loss.backward()
@@ -266,7 +294,11 @@ def train(
         lr: Learning rate
         device: Device ('cuda' or 'cpu')
         model_type: "basic" or "bpr"
-        **kwargs: Additional arguments (weight_decay, num_negatives, etc.)
+        **kwargs: Additional arguments including:
+            - weight_decay: L2 regularization strength
+            - num_negatives: Number of negative samples (BPR only)
+            - proximal_mu: FedProx proximal term coefficient
+            - global_params: Global model parameters for FedProx
 
     Returns:
         Average training loss
@@ -279,6 +311,8 @@ def train(
             lr,
             device,
             weight_decay=kwargs.get('weight_decay', 1e-5),
+            proximal_mu=kwargs.get('proximal_mu', 0.0),
+            global_params=kwargs.get('global_params', None),
         )
     elif model_type.lower() == "bpr":
         return train_bpr_mf(
@@ -289,6 +323,8 @@ def train(
             device,
             weight_decay=kwargs.get('weight_decay', 1e-5),
             num_negatives=kwargs.get('num_negatives', 1),
+            proximal_mu=kwargs.get('proximal_mu', 0.0),
+            global_params=kwargs.get('global_params', None),
         )
     else:
         raise ValueError(f"Unknown model_type: {model_type}")

@@ -58,6 +58,16 @@ def train(msg: Message, context: Context):
     device = get_device()
     model.to(device)
 
+    # === FedProx: Save global parameters BEFORE training ===
+    # Get proximal_mu from config (0.0 means standard FedAvg behavior)
+    proximal_mu = msg.content["config"].get("proximal_mu", 0.0)
+
+    # Save global parameters for proximal term (only if proximal_mu > 0)
+    global_params = None
+    if proximal_mu > 0:
+        global_params = [p.detach().clone() for p in model.parameters()]
+    # === End FedProx modification ===
+
     # Load the data
     partition_id = context.node_config["partition-id"]
     num_partitions = context.node_config["num-partitions"]
@@ -78,6 +88,9 @@ def train(msg: Message, context: Context):
         model_type=model_type,
         weight_decay=context.run_config.get("weight-decay", 1e-5),
         num_negatives=context.run_config.get("num-negatives", 1),
+        # FedProx parameters
+        proximal_mu=proximal_mu,
+        global_params=global_params,
     )
 
     # Construct and return reply Message

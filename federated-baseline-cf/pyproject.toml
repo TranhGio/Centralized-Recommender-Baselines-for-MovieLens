@@ -41,6 +41,12 @@ num-server-rounds = 10
 fraction-train = 1.0
 local-epochs = 5
 
+# Federated Learning Strategy
+strategy = "fedavg"         # Options: "fedavg" (default) or "fedprox"
+proximal-mu = 0.0           # Proximal term strength for FedProx (μ in paper)
+                            # When 0.0, FedProx behaves identically to FedAvg
+                            # Recommended values: 0.001, 0.01, 0.1, 1.0
+
 # Model parameters
 model-type = "basic"  # Options: "basic" (MSE) or "bpr" (Bayesian Personalized Ranking)
 embedding-dim = 128  # Latent factor dimensionality (32, 64, 128, 256)

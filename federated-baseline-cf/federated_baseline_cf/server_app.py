@@ -7,7 +7,7 @@ from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 from flwr.app import ArrayRecord, ConfigRecord, Context
 from flwr.serverapp import Grid, ServerApp
-from flwr.serverapp.strategy import FedAvg
+from flwr.serverapp.strategy import FedAvg, FedProx
 
 from federated_baseline_cf.task import get_model, test, evaluate_ranking
 from federated_baseline_cf.dataset import load_full_data
@@ -143,6 +143,10 @@ def main(grid: Grid, context: Context) -> None:
     embedding_dim: int = context.run_config.get("embedding-dim", 64)
     dropout: float = context.run_config.get("dropout", 0.1)
 
+    # FedProx configuration
+    strategy_name: str = context.run_config.get("strategy", "fedavg").lower()
+    proximal_mu: float = context.run_config.get("proximal-mu", 0.0)
+
     # Load global Matrix Factorization model
     print(f"\nInitializing {model_type.upper()} Matrix Factorization model...")
     print(f"  Embedding dimension: {embedding_dim}")
@@ -159,11 +163,19 @@ def main(grid: Grid, context: Context) -> None:
 
     arrays = ArrayRecord(global_model.state_dict())
 
-    # Initialize FedAvg strategy
+    # Initialize strategy based on configuration
     # Note: Flower automatically does weighted averaging of metrics based on num-examples
-    strategy = FedAvg(
-        fraction_train=fraction_train,
-    )
+    if strategy_name == "fedprox":
+        strategy = FedProx(
+            fraction_train=fraction_train,
+            proximal_mu=proximal_mu,
+        )
+        print(f"  Strategy: FedProx (proximal_mu={proximal_mu})")
+    else:
+        strategy = FedAvg(
+            fraction_train=fraction_train,
+        )
+        print(f"  Strategy: FedAvg")
 
     # Start strategy, run FedAvg for `num_rounds`
     print(f"\nStarting Federated Learning with {num_rounds} rounds...")
@@ -176,7 +188,7 @@ def main(grid: Grid, context: Context) -> None:
     result = strategy.start(
         grid=grid,
         initial_arrays=arrays,
-        train_config=ConfigRecord({"lr": lr}),
+        train_config=ConfigRecord({"lr": lr, "proximal_mu": proximal_mu}),
         num_rounds=num_rounds,
     )
 
@@ -258,12 +270,14 @@ def main(grid: Grid, context: Context) -> None:
 
     # Create results JSON structure similar to centralized results
     results_data = {
-        "model_name": f"{model_type.upper()}_MF_Federated",
+        "model_name": f"{model_type.upper()}_MF_Federated_{strategy_name.upper()}",
         "dataset": "ml-1m",
         "federated_config": {
             "num_rounds": num_rounds,
             "num_clients": 10,  # Adjust based on your config
             "fraction_train": fraction_train,
+            "strategy": strategy_name,
+            "proximal_mu": proximal_mu,
             "model_type": model_type,
             "embedding_dim": embedding_dim,
             "dropout": dropout,
@@ -279,7 +293,7 @@ def main(grid: Grid, context: Context) -> None:
     results_dir = Path("../results/federated")
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    results_filename = results_dir / f"{model_type}_mf_federated_results.json"
+    results_filename = results_dir / f"{model_type}_mf_{strategy_name}_results.json"
     with open(results_filename, 'w') as f:
         json.dump(results_data, f, indent=4)
 
