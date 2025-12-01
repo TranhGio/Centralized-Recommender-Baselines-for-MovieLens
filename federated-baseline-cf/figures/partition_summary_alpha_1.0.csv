@@ -1,0 +1,11 @@
+Client,Ratings,Users,Movies,Avg Rating,Ratings/User,Top Genres
+0,271,7,188,4.19,38.7,"Drama (116), Children's (67), Animation (66)"
+1,35448,408,2734,3.80,86.9,"Drama (16530), Thriller (11131), Comedy (7687)"
+2,3936,68,1255,3.99,57.9,"Drama (2259), Thriller (885), Sci-Fi (625)"
+3,1712,21,673,3.60,81.5,"Thriller (1141), Action (806), Drama (392)"
+4,192,2,169,3.07,96.0,"Children's (157), Animation (80), Comedy (73)"
+5,67125,554,2921,3.67,121.2,"Comedy (31450), Drama (18110), Action (13000)"
+6,339401,1987,3612,3.62,170.8,"Drama (150889), Comedy (143936), Romance (63997)"
+7,49397,442,2564,3.60,111.8,"Action (22067), Sci-Fi (18913), Comedy (15480)"
+8,2733,32,576,3.38,85.4,"Horror (2381), Thriller (687), Sci-Fi (445)"
+9,499994,2519,3531,3.52,198.5,"Action (165069), Comedy (156650), Drama (155240)"

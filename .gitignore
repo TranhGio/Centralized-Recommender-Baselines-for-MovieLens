@@ -1,1 +1,57 @@
+# IDE
 .idea
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# macOS
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Model checkpoints (ignoring model weights, but keeping JSON results)
+*.pt
+*.pth
+*.pkl
+*.p
+
+# Keep results JSON files
+!results/**/*.json

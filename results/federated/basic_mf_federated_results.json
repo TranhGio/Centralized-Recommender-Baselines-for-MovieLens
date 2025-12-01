@@ -1,0 +1,16 @@
+{
+    "model_name": "BASIC_MF_Federated",
+    "dataset": "ml-1m",
+    "federated_config": {
+        "num_rounds": 10,
+        "num_clients": 10,
+        "fraction_train": 0.5,
+        "model_type": "basic",
+        "embedding_dim": 64,
+        "dropout": 0.1,
+        "learning_rate": 0.001
+    },
+    "timestamp": "2025-11-23T23:20:16.429920",
+    "final_metrics": {},
+    "training_rounds": 10
+}
