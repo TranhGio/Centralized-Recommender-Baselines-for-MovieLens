@@ -275,6 +275,270 @@ def train_bpr_mf(
     return avg_loss
 
 
+# =============================================================================
+# SCAFFOLD Training Functions
+# =============================================================================
+
+def train_basic_mf_scaffold(
+    model: BasicMF,
+    trainloader,
+    epochs: int,
+    lr: float,
+    device: str,
+    weight_decay: float = 1e-5,
+    global_c: list = None,
+    local_c: list = None,
+) -> Tuple[float, list]:
+    """
+    Train BasicMF model with SCAFFOLD control variate correction.
+
+    SCAFFOLD (Karimireddy et al., ICML 2020) uses control variates to correct
+    for client drift in heterogeneous federated settings.
+
+    Gradient correction: g_corrected = g - c_i + c (where c_i is local, c is global)
+
+    Args:
+        model: BasicMF model instance
+        trainloader: Training data loader
+        epochs: Number of training epochs
+        lr: Learning rate
+        device: Device to train on ('cuda' or 'cpu')
+        weight_decay: L2 regularization strength
+        global_c: Global control variate (list of tensors, same shape as model params)
+        local_c: Local control variate (list of tensors, same shape as model params)
+
+    Returns:
+        Tuple of (average_loss, delta_c) where delta_c is the control variate update
+    """
+    model.to(device)
+    model.train()
+
+    # Save initial parameters for control variate update (Option II)
+    initial_params = [p.detach().clone() for p in model.parameters()]
+
+    # Initialize control variates if not provided
+    if global_c is None:
+        global_c = [torch.zeros_like(p) for p in model.parameters()]
+    if local_c is None:
+        local_c = [torch.zeros_like(p) for p in model.parameters()]
+
+    criterion = MSELoss()
+    # SCAFFOLD typically uses SGD, but Adam can also work
+    optimizer = optim.SGD(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+    total_loss = 0.0
+    num_batches = 0
+    total_steps = 0
+
+    for epoch in range(epochs):
+        epoch_loss = 0.0
+
+        for batch in trainloader:
+            user_ids = batch['user'].to(device)
+            item_ids = batch['item'].to(device)
+            ratings = batch['rating'].to(device)
+
+            # Forward pass
+            predictions = model(user_ids, item_ids)
+
+            # Compute loss
+            loss = criterion(predictions, ratings)
+
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+
+            # SCAFFOLD: Apply gradient correction g = g - c_i + c
+            for p, gc, lc in zip(model.parameters(), global_c, local_c):
+                if p.grad is not None:
+                    p.grad.data.add_(gc.to(device) - lc.to(device))
+
+            optimizer.step()
+
+            epoch_loss += loss.item()
+            num_batches += 1
+            total_steps += 1
+
+        total_loss += epoch_loss
+
+    # Compute delta_c (Option II from SCAFFOLD paper)
+    # c_i_new = c_i - c + (1/(K*lr)) * (x_initial - x_final)
+    # delta_c = c_i_new - c_i = -c + (1/(K*lr)) * (x_initial - x_final)
+    delta_c = []
+    for p_init, p_final, gc in zip(initial_params, model.parameters(), global_c):
+        delta = -gc.to(device) + (1.0 / (total_steps * lr)) * (p_init.to(device) - p_final.data)
+        delta_c.append(delta.cpu())
+
+    avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+    return avg_loss, delta_c
+
+
+def train_bpr_mf_scaffold(
+    model: BPRMF,
+    trainloader,
+    epochs: int,
+    lr: float,
+    device: str,
+    weight_decay: float = 1e-5,
+    num_negatives: int = 1,
+    global_c: list = None,
+    local_c: list = None,
+) -> Tuple[float, list]:
+    """
+    Train BPRMF model with SCAFFOLD control variate correction.
+
+    SCAFFOLD (Karimireddy et al., ICML 2020) uses control variates to correct
+    for client drift in heterogeneous federated settings.
+
+    Gradient correction: g_corrected = g - c_i + c (where c_i is local, c is global)
+
+    Args:
+        model: BPRMF model instance
+        trainloader: Training data loader
+        epochs: Number of training epochs
+        lr: Learning rate
+        device: Device to train on
+        weight_decay: L2 regularization strength
+        num_negatives: Number of negative samples per positive
+        global_c: Global control variate (list of tensors)
+        local_c: Local control variate (list of tensors)
+
+    Returns:
+        Tuple of (average_loss, delta_c) where delta_c is the control variate update
+    """
+    model.to(device)
+    model.train()
+
+    # Save initial parameters for control variate update (Option II)
+    initial_params = [p.detach().clone() for p in model.parameters()]
+
+    # Initialize control variates if not provided
+    if global_c is None:
+        global_c = [torch.zeros_like(p) for p in model.parameters()]
+    if local_c is None:
+        local_c = [torch.zeros_like(p) for p in model.parameters()]
+
+    criterion = BPRLoss()
+    optimizer = optim.SGD(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+    # Build user_rated_items dictionary for negative sampling
+    user_rated_items = {}
+    for batch in trainloader:
+        users = batch['user'].numpy()
+        items = batch['item'].numpy()
+        for u, i in zip(users, items):
+            if u not in user_rated_items:
+                user_rated_items[u] = set()
+            user_rated_items[u].add(i)
+
+    total_loss = 0.0
+    num_batches = 0
+    total_steps = 0
+
+    for epoch in range(epochs):
+        epoch_loss = 0.0
+
+        for batch in trainloader:
+            user_ids = batch['user'].to(device)
+            pos_item_ids = batch['item'].to(device)
+
+            # Sample negative items
+            neg_item_ids = model.sample_negatives(
+                user_ids,
+                pos_item_ids,
+                num_negatives=num_negatives,
+                user_rated_items=user_rated_items,
+                sampling_strategy='uniform',
+            )
+
+            # Forward pass
+            pos_scores, neg_scores = model(user_ids, pos_item_ids, neg_item_ids)
+
+            # Compute BPR loss
+            loss = criterion(pos_scores, neg_scores)
+
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+
+            # SCAFFOLD: Apply gradient correction g = g - c_i + c
+            for p, gc, lc in zip(model.parameters(), global_c, local_c):
+                if p.grad is not None:
+                    p.grad.data.add_(gc.to(device) - lc.to(device))
+
+            optimizer.step()
+
+            epoch_loss += loss.item()
+            num_batches += 1
+            total_steps += 1
+
+        total_loss += epoch_loss
+
+    # Compute delta_c (Option II from SCAFFOLD paper)
+    delta_c = []
+    for p_init, p_final, gc in zip(initial_params, model.parameters(), global_c):
+        delta = -gc.to(device) + (1.0 / (total_steps * lr)) * (p_init.to(device) - p_final.data)
+        delta_c.append(delta.cpu())
+
+    avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+    return avg_loss, delta_c
+
+
+def train_scaffold(
+    model,
+    trainloader,
+    epochs: int,
+    lr: float,
+    device: str,
+    model_type: str = "bpr",
+    global_c: list = None,
+    local_c: list = None,
+    **kwargs
+) -> Tuple[float, list]:
+    """
+    Unified SCAFFOLD training function for both model types.
+
+    Args:
+        model: Model instance (BasicMF or BPRMF)
+        trainloader: Training data loader
+        epochs: Number of epochs
+        lr: Learning rate
+        device: Device ('cuda' or 'cpu')
+        model_type: "basic" or "bpr"
+        global_c: Global control variate
+        local_c: Local control variate
+        **kwargs: Additional arguments (weight_decay, num_negatives)
+
+    Returns:
+        Tuple of (average_loss, delta_c)
+    """
+    if model_type.lower() == "basic":
+        return train_basic_mf_scaffold(
+            model,
+            trainloader,
+            epochs,
+            lr,
+            device,
+            weight_decay=kwargs.get('weight_decay', 1e-5),
+            global_c=global_c,
+            local_c=local_c,
+        )
+    elif model_type.lower() == "bpr":
+        return train_bpr_mf_scaffold(
+            model,
+            trainloader,
+            epochs,
+            lr,
+            device,
+            weight_decay=kwargs.get('weight_decay', 1e-5),
+            num_negatives=kwargs.get('num_negatives', 1),
+            global_c=global_c,
+            local_c=local_c,
+        )
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}")
+
+
 def train(
     model,
     trainloader,

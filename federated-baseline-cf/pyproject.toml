@@ -42,10 +42,11 @@ fraction-train = 1.0
 local-epochs = 5
 
 # Federated Learning Strategy
-strategy = "fedavg"         # Options: "fedavg" (default) or "fedprox"
+strategy = "fedavg"         # Options: "fedavg", "fedprox", or "scaffold"
 proximal-mu = 0.0           # Proximal term strength for FedProx (μ in paper)
                             # When 0.0, FedProx behaves identically to FedAvg
                             # Recommended values: 0.001, 0.01, 0.1, 1.0
+                            # Note: SCAFFOLD uses control variates instead of proximal term
 
 # Model parameters
 model-type = "basic"  # Options: "basic" (MSE) or "bpr" (Bayesian Personalized Ranking)

@@ -7,6 +7,7 @@ from flwr.clientapp import ClientApp
 from federated_baseline_cf.task import get_model, load_data
 from federated_baseline_cf.task import test as test_fn
 from federated_baseline_cf.task import train as train_fn
+from federated_baseline_cf.task import train_scaffold as train_scaffold_fn
 from federated_baseline_cf.task import evaluate_ranking
 
 # Flower ClientApp
@@ -14,6 +15,10 @@ app = ClientApp()
 
 # Cache for device detection (avoid repeated CUDA tests)
 _device_cache = None
+
+# Cache for SCAFFOLD control variates (persists across rounds per client)
+# Key: partition_id, Value: list of tensors (local control variate c_i)
+_scaffold_control_variates = {}
 
 
 def get_device():
@@ -58,16 +63,6 @@ def train(msg: Message, context: Context):
     device = get_device()
     model.to(device)
 
-    # === FedProx: Save global parameters BEFORE training ===
-    # Get proximal_mu from config (0.0 means standard FedAvg behavior)
-    proximal_mu = msg.content["config"].get("proximal_mu", 0.0)
-
-    # Save global parameters for proximal term (only if proximal_mu > 0)
-    global_params = None
-    if proximal_mu > 0:
-        global_params = [p.detach().clone() for p in model.parameters()]
-    # === End FedProx modification ===
-
     # Load the data
     partition_id = context.node_config["partition-id"]
     num_partitions = context.node_config["num-partitions"]
@@ -78,30 +73,105 @@ def train(msg: Message, context: Context):
         alpha=alpha,
     )
 
-    # Call the training function
-    train_loss = train_fn(
-        model=model,
-        trainloader=trainloader,
-        epochs=context.run_config["local-epochs"],
-        lr=msg.content["config"]["lr"],
-        device=device,
-        model_type=model_type,
-        weight_decay=context.run_config.get("weight-decay", 1e-5),
-        num_negatives=context.run_config.get("num-negatives", 1),
-        # FedProx parameters
-        proximal_mu=proximal_mu,
-        global_params=global_params,
-    )
+    # Get strategy from config
+    strategy = context.run_config.get("strategy", "fedavg").lower()
 
-    # Construct and return reply Message
-    model_record = ArrayRecord(model.state_dict())
-    metrics = {
-        "train_loss": train_loss,
-        "num-examples": len(trainloader.dataset),
-    }
-    metric_record = MetricRecord(metrics)
-    content = RecordDict({"arrays": model_record, "metrics": metric_record})
-    return Message(content=content, reply_to=msg)
+    # === SCAFFOLD Training ===
+    if strategy == "scaffold":
+        global _scaffold_control_variates
+
+        # Get global control variate from server (list of tensors as lists)
+        global_c_data = msg.content["config"].get("global_c", None)
+
+        # Convert global_c from list format back to tensors
+        if global_c_data is not None:
+            global_c = [torch.tensor(c, device=device) for c in global_c_data]
+        else:
+            # Initialize to zeros if not received (first round)
+            global_c = [torch.zeros_like(p, device=device) for p in model.parameters()]
+
+        # Get or initialize local control variate from cache
+        if partition_id not in _scaffold_control_variates:
+            _scaffold_control_variates[partition_id] = [
+                torch.zeros_like(p, device=device) for p in model.parameters()
+            ]
+        local_c = _scaffold_control_variates[partition_id]
+
+        # Train with SCAFFOLD correction
+        train_loss, delta_c = train_scaffold_fn(
+            model=model,
+            trainloader=trainloader,
+            epochs=context.run_config["local-epochs"],
+            lr=msg.content["config"]["lr"],
+            device=device,
+            model_type=model_type,
+            weight_decay=context.run_config.get("weight-decay", 1e-5),
+            num_negatives=context.run_config.get("num-negatives", 1),
+            global_c=global_c,
+            local_c=local_c,
+        )
+
+        # Update local control variate: c_i_new = c_i + delta_c
+        _scaffold_control_variates[partition_id] = [
+            lc + dc for lc, dc in zip(local_c, delta_c)
+        ]
+
+        # Construct reply with model weights AND delta_c for server aggregation
+        model_record = ArrayRecord(model.state_dict())
+
+        # Convert delta_c tensors to lists for transmission
+        delta_c_data = [dc.cpu().tolist() for dc in delta_c]
+
+        metrics = {
+            "train_loss": train_loss,
+            "num-examples": len(trainloader.dataset),
+        }
+        metric_record = MetricRecord(metrics)
+
+        # Include delta_c in config for server to aggregate
+        delta_c_record = {"delta_c": delta_c_data}
+
+        content = RecordDict({
+            "arrays": model_record,
+            "metrics": metric_record,
+            "scaffold_data": delta_c_record,
+        })
+        return Message(content=content, reply_to=msg)
+
+    # === FedAvg / FedProx Training ===
+    else:
+        # Get proximal_mu from config (0.0 means standard FedAvg behavior)
+        proximal_mu = msg.content["config"].get("proximal_mu", 0.0)
+
+        # Save global parameters for proximal term (only if proximal_mu > 0)
+        global_params = None
+        if proximal_mu > 0:
+            global_params = [p.detach().clone() for p in model.parameters()]
+
+        # Call the training function
+        train_loss = train_fn(
+            model=model,
+            trainloader=trainloader,
+            epochs=context.run_config["local-epochs"],
+            lr=msg.content["config"]["lr"],
+            device=device,
+            model_type=model_type,
+            weight_decay=context.run_config.get("weight-decay", 1e-5),
+            num_negatives=context.run_config.get("num-negatives", 1),
+            # FedProx parameters
+            proximal_mu=proximal_mu,
+            global_params=global_params,
+        )
+
+        # Construct and return reply Message
+        model_record = ArrayRecord(model.state_dict())
+        metrics = {
+            "train_loss": train_loss,
+            "num-examples": len(trainloader.dataset),
+        }
+        metric_record = MetricRecord(metrics)
+        content = RecordDict({"arrays": model_record, "metrics": metric_record})
+        return Message(content=content, reply_to=msg)
 
 
 @app.evaluate()
