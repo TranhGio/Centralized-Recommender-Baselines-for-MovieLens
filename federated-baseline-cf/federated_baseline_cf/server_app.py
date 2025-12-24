@@ -2,12 +2,13 @@
 
 import torch
 import json
+import wandb
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 from flwr.app import ArrayRecord, ConfigRecord, Context
 from flwr.serverapp import Grid, ServerApp
-from flwr.serverapp.strategy import FedAvg
+from flwr.serverapp.strategy import FedAvg, FedProx
 
 from federated_baseline_cf.task import get_model, test, evaluate_ranking
 from federated_baseline_cf.dataset import load_full_data
@@ -143,6 +144,37 @@ def main(grid: Grid, context: Context) -> None:
     embedding_dim: int = context.run_config.get("embedding-dim", 64)
     dropout: float = context.run_config.get("dropout", 0.1)
 
+    # FedProx configuration
+    strategy_name: str = context.run_config.get("strategy", "fedavg").lower()
+    proximal_mu: float = context.run_config.get("proximal-mu", 0.0)
+
+    # Initialize Weights & Biases if enabled
+    wandb_enabled = context.run_config.get("wandb-enabled", False)
+    if wandb_enabled:
+        wandb_config = {
+            "num_rounds": num_rounds,
+            "fraction_train": fraction_train,
+            "local_epochs": context.run_config.get("local-epochs", 5),
+            "strategy": strategy_name,
+            "proximal_mu": proximal_mu,
+            "model_type": model_type,
+            "embedding_dim": embedding_dim,
+            "dropout": dropout,
+            "lr": lr,
+            "weight_decay": context.run_config.get("weight-decay", 1e-5),
+            "alpha": context.run_config.get("alpha", 0.5),
+        }
+        wandb_project = context.run_config.get("wandb-project", "federated-cf")
+        wandb_entity = context.run_config.get("wandb-entity", "")
+        wandb_run_name = context.run_config.get("wandb-run-name", "")
+        wandb.init(
+            project=wandb_project,
+            entity=wandb_entity if wandb_entity else None,
+            name=wandb_run_name if wandb_run_name else None,
+            config=wandb_config,
+        )
+        print("  Weights & Biases: Enabled")
+
     # Load global Matrix Factorization model
     print(f"\nInitializing {model_type.upper()} Matrix Factorization model...")
     print(f"  Embedding dimension: {embedding_dim}")
@@ -159,11 +191,19 @@ def main(grid: Grid, context: Context) -> None:
 
     arrays = ArrayRecord(global_model.state_dict())
 
-    # Initialize FedAvg strategy
+    # Initialize strategy based on configuration
     # Note: Flower automatically does weighted averaging of metrics based on num-examples
-    strategy = FedAvg(
-        fraction_train=fraction_train,
-    )
+    if strategy_name == "fedprox":
+        strategy = FedProx(
+            fraction_train=fraction_train,
+            proximal_mu=proximal_mu,
+        )
+        print(f"  Strategy: FedProx (proximal_mu={proximal_mu})")
+    else:
+        strategy = FedAvg(
+            fraction_train=fraction_train,
+        )
+        print(f"  Strategy: FedAvg")
 
     # Start strategy, run FedAvg for `num_rounds`
     print(f"\nStarting Federated Learning with {num_rounds} rounds...")
@@ -176,9 +216,29 @@ def main(grid: Grid, context: Context) -> None:
     result = strategy.start(
         grid=grid,
         initial_arrays=arrays,
-        train_config=ConfigRecord({"lr": lr}),
+        train_config=ConfigRecord({"lr": lr, "proximal_mu": proximal_mu}),
         num_rounds=num_rounds,
     )
+
+    # Log per-round metrics to wandb
+    if wandb_enabled:
+        # Combine training and evaluation metrics for each round into a single log call
+        # (wandb requires monotonically increasing steps)
+        all_rounds = set(result.train_metrics_clientapp.keys()) | set(result.evaluate_metrics_clientapp.keys())
+        for round_num in sorted(all_rounds):
+            round_metrics = {"round": round_num}
+
+            # Add training metrics for this round
+            if round_num in result.train_metrics_clientapp:
+                for key, value in result.train_metrics_clientapp[round_num].items():
+                    round_metrics[f"train/{key}"] = value
+
+            # Add evaluation metrics for this round
+            if round_num in result.evaluate_metrics_clientapp:
+                for key, value in result.evaluate_metrics_clientapp[round_num].items():
+                    round_metrics[f"eval/{key}"] = value
+
+            wandb.log(round_metrics, step=round_num)
 
     # Print training complete message
     print("\n" + "="*70)
@@ -256,14 +316,28 @@ def main(grid: Grid, context: Context) -> None:
     # Print evaluation results
     print_evaluation_metrics(num_rounds, final_metrics, context)
 
+    # Log final metrics to wandb
+    if wandb_enabled:
+        # Log final metrics at step num_rounds + 1 (after all round metrics)
+        final_log = {"round": num_rounds + 1}
+        for key, value in final_metrics.items():
+            final_log[f"final/{key}"] = value
+        wandb.log(final_log, step=num_rounds + 1)
+
+        # Also add to summary for easy comparison in W&B dashboard
+        for key, value in final_metrics.items():
+            wandb.run.summary[f"final/{key}"] = value
+
     # Create results JSON structure similar to centralized results
     results_data = {
-        "model_name": f"{model_type.upper()}_MF_Federated",
+        "model_name": f"{model_type.upper()}_MF_Federated_{strategy_name.upper()}",
         "dataset": "ml-1m",
         "federated_config": {
             "num_rounds": num_rounds,
             "num_clients": 10,  # Adjust based on your config
             "fraction_train": fraction_train,
+            "strategy": strategy_name,
+            "proximal_mu": proximal_mu,
             "model_type": model_type,
             "embedding_dim": embedding_dim,
             "dropout": dropout,
@@ -279,7 +353,7 @@ def main(grid: Grid, context: Context) -> None:
     results_dir = Path("../results/federated")
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    results_filename = results_dir / f"{model_type}_mf_federated_results.json"
+    results_filename = results_dir / f"{model_type}_mf_{strategy_name}_results.json"
     with open(results_filename, 'w') as f:
         json.dump(results_data, f, indent=4)
 
@@ -291,3 +365,8 @@ def main(grid: Grid, context: Context) -> None:
     # model_filename = results_dir / f"final_model_{model_type}_d{embedding_dim}.pt"
     # torch.save(state_dict, model_filename)
     # print(f"Model saved to: {model_filename.resolve()}")
+
+    # Finish wandb run
+    if wandb_enabled:
+        wandb.finish()
+        print("  Weights & Biases run completed")

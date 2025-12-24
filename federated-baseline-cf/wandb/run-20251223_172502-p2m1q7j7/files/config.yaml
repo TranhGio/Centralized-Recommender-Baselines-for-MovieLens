@@ -1,0 +1,88 @@
+_wandb:
+    value:
+        cli_version: 0.23.1
+        e:
+            sst0mxwbqoioxsz2oya5astkglavhihk:
+                args:
+                    - --app
+                    - .
+                    - --num-supernodes
+                    - "5"
+                cpu_count: 24
+                cpu_count_logical: 32
+                cudaVersion: "13.0"
+                disk:
+                    /:
+                        total: "982240026624"
+                        used: "528526581760"
+                email: tranhgio15@gmail.com
+                executable: /home/bes/miniconda3/envs/recsys_fl/bin/python3.11
+                git:
+                    commit: 6954dd3829281ad7d5b3debc5cfbd9c5587c64f5
+                    remote: git@github.com-vinh:TranhGio/Centralized-Recommender-Baselines-for-MovieLens.git
+                gpu: NVIDIA GeForce RTX 5090
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Blackwell
+                      cudaCores: 21760
+                      memoryTotal: "34190917632"
+                      name: NVIDIA GeForce RTX 5090
+                      uuid: GPU-63741715-3e4c-5bcc-3255-600cb876e895
+                host: bes-aimachine-02
+                memory:
+                    total: "67124600832"
+                os: Linux-6.14.0-37-generic-x86_64-with-glibc2.39
+                program: /home/bes/miniconda3/envs/recsys_fl/bin/flower-simulation
+                python: CPython 3.11.14
+                root: /home/bes/Desktop/vinh/federated-learning/centralize-recommendation-system/federated-baseline-cf
+                startedAt: "2025-12-23T10:25:02.359520Z"
+                writerId: sst0mxwbqoioxsz2oya5astkglavhihk
+        m: []
+        python_version: 3.11.14
+        t:
+            "1":
+                - 1
+                - 2
+                - 3
+                - 5
+                - 30
+                - 49
+                - 53
+            "2":
+                - 1
+                - 2
+                - 3
+                - 5
+                - 30
+                - 49
+                - 53
+            "3":
+                - 2
+                - 16
+                - 62
+            "4": 3.11.14
+            "5": 0.23.1
+            "12": 0.23.1
+            "13": linux-x86_64
+alpha:
+    value: 0.5
+dropout:
+    value: 0.1
+embedding_dim:
+    value: 128
+fraction_train:
+    value: 1
+local_epochs:
+    value: 5
+lr:
+    value: 0.005
+model_type:
+    value: basic
+num_rounds:
+    value: 10
+proximal_mu:
+    value: 0.01
+strategy:
+    value: fedprox
+weight_decay:
+    value: 1e-05
